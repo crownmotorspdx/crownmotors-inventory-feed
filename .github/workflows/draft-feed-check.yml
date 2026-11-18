@@ -30,6 +30,32 @@ jobs:
       - name: Run validation tests
         run: python -m unittest discover -s tests -v
 
+
+      - name: Diagnose website access
+        run: |
+          python - <<'PY'
+          import requests
+          from urllib.robotparser import RobotFileParser
+
+          url = "https://www.crownmotorspdx.com/robots.txt"
+          index = "https://www.crownmotorspdx.com/used-vehicles/?_exclude=condition"
+
+          try:
+              r = requests.get(url, timeout=20)
+              print("HTTP status:", r.status_code)
+              print("Final URL:", r.url)
+              print("Content type:", r.headers.get("content-type"))
+              print("Robots response:", repr(r.text[:1000]))
+
+              r.raise_for_status()
+              parser = RobotFileParser()
+              parser.parse(r.text.splitlines())
+              print("Inventory allowed:", parser.can_fetch("CrownMotorsPDX-InventoryFeed", index))
+          except Exception as exc:
+              print("Access diagnostic failed:", repr(exc))
+              raise
+          PY
+
       - name: Extract Crown Motors inventory
         run: python feed_builder.py --min-vehicles 18
 
