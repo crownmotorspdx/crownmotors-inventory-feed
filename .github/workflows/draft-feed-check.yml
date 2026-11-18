@@ -1,0 +1,41 @@
+
+name: Crown Motors Inventory Feed Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-inventory:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
+
+    steps:
+      - name: Download repository files
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run validation tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Extract Crown Motors inventory
+        run: python feed_builder.py --min-vehicles 18
+
+      - name: Save test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: crown-inventory-test
+          path: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project/output/crown_inventory.jsonl.gz
+          retention-days: 7
