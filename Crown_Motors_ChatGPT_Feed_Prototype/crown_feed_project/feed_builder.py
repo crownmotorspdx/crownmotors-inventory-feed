@@ -189,10 +189,18 @@ def main():
     else:
         sess = requests.Session(); sess.headers.update({'User-Agent':UA})
         # Honor robots.txt; fail closed if unreachable or disallowed.
-        parser = RobotFileParser(); parser.set_url(BASE+'/robots.txt')
-        try: parser.read()
-        except Exception as e: sys.exit(f'Cannot check robots policy: {e}')
-        if not parser.can_fetch(UA, INDEX): sys.exit('Automated inventory fetch not permitted/robots policy unavailable')
+        
+        parser = RobotFileParser()
+        try:
+            robots_response = sess.get(BASE + '/robots.txt', timeout=20)
+            robots_response.raise_for_status()
+            parser.parse(robots_response.text.splitlines())
+        except requests.RequestException as e:
+            sys.exit(f'Cannot retrieve robots policy: {e}')
+
+        if not parser.can_fetch(UA, INDEX):
+            sys.exit('Automated inventory fetch not permitted')
+
         links = {}
         for page in (1,2,3,4,5):
             target = INDEX if page==1 else INDEX+'&page='+str(page)
