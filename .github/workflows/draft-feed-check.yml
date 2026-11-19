@@ -2,6 +2,12 @@ name: Crown Motors Daily Inventory Feed
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_large_drop:
+        description: 'Approve an intentional inventory drop greater than 25% (minimum 18 still applies)'
+        type: boolean
+        required: false
+        default: false
   schedule:
     - cron: '0 15 * * *'  # Daily at 15:00 UTC (7 AM PST / 8 AM PDT)
 
@@ -35,7 +41,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
       - name: Extract Crown Motors inventory
-        run: python feed_builder.py --min-vehicles 8
+        run: python feed_builder.py --min-vehicles 18
 
       - name: Validate and summarize feed
         run: |
@@ -50,7 +56,7 @@ jobs:
           with gzip.open(p, 'rt', encoding='utf-8') as f:
               rows = [json.loads(line) for line in f if line.strip()]
           print('Extracted vehicles:', len(rows))
-          assert len(rows) >= 8, 'Unexpectedly small inventory; publication stopped'
+          assert len(rows) >= 18, 'Unexpectedly small inventory; publication stopped'
           ids = [r.get('item_id') for r in rows]
           assert all(isinstance(v, str) and re.fullmatch(r'[A-HJ-NPR-Z0-9]{17}', v) for v in ids), 'Invalid VIN detected'
           assert len(set(ids)) == len(ids), 'Duplicate VIN detected'
@@ -61,6 +67,39 @@ jobs:
           print('Unique VINs:', len(set(ids)))
           print('Unique photo URLs:', len(set(photos)))
           print('Sample titles:', [r.get('title') for r in rows[:3]])
+          PY
+
+      - name: Guard against unexpected inventory drops
+        env:
+          ALLOW_LARGE_DROP: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_large_drop || false }}
+        run: |
+          python - <<'PY'
+          import gzip
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import requests
+
+          published = 'https://crownmotorspdx.github.io/crownmotors-inventory-feed/crown_inventory.jsonl.gz'
+          current_path = Path('output/crown_inventory.jsonl.gz')
+          with gzip.open(current_path, 'rt', encoding='utf-8') as f:
+              current = [json.loads(line) for line in f if line.strip()]
+          response = requests.get(published, timeout=30, headers={'Cache-Control': 'no-cache'})
+          response.raise_for_status()
+          with gzip.open(io.BytesIO(response.content), 'rt', encoding='utf-8') as f:
+              previous = [json.loads(line) for line in f if line.strip()]
+          assert previous, 'Previous published feed is empty; publication stopped'
+          previous_ids = {r['item_id'] for r in previous}
+          current_ids = {r['item_id'] for r in current}
+          removed = previous_ids - current_ids
+          drop = (len(previous) - len(current)) / len(previous)
+          print(f'Previously published: {len(previous)}; current: {len(current)}; removed VINs: {len(removed)}; count drop: {drop:.1%}')
+          if drop > 0.25:
+              if os.environ.get('ALLOW_LARGE_DROP', '').lower() == 'true':
+                  print('Manual override approved for large inventory drop')
+              else:
+                  raise SystemExit('Inventory count fell more than 25%; publication blocked. Investigate missing VINs or use manual approval.')
           PY
 
       - name: Prepare GitHub Pages feed
