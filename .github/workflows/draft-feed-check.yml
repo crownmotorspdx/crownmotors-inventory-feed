@@ -59,6 +59,31 @@ jobs:
       - name: Extract Crown Motors inventory
         run: python feed_builder.py --min-vehicles 18
 
+      - name: Display inventory validation report
+        run: |
+          python - <<'PY'
+          import gzip
+          import json
+
+          path = "output/crown_inventory.jsonl.gz"
+
+          with gzip.open(path, "rt", encoding="utf-8") as file:
+              vehicles = [json.loads(line) for line in file if line.strip()]
+
+          print("TOTAL VEHICLES:", len(vehicles))
+          print("")
+
+          for number, vehicle in enumerate(vehicles, 1):
+              print(f"VEHICLE {number}")
+              print("VIN:", vehicle.get("item_id"))
+              print("TITLE:", vehicle.get("title"))
+              print("PRICE:", vehicle.get("price"))
+              print("IMAGE:", vehicle.get("image_url"))
+              print("LISTING:", vehicle.get("url"))
+              print("AVAILABILITY:", vehicle.get("availability"))
+              print("---")
+          PY
+
       - name: Save test results
         uses: actions/upload-artifact@v4
         with:
