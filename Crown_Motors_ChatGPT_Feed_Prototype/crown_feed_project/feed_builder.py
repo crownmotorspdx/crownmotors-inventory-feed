@@ -86,25 +86,72 @@ def meta(soup, *names):
 
 
 def direct_image(soup):
+    """Find a likely vehicle photograph, including lazy-loaded/CDN image URLs."""
     candidates = []
-    m = meta(soup, 'og:image', 'twitter:image')
-    if m: candidates.append(m)
-    for o in get_jsonld(soup):
-        images = o.get('image')
-        if isinstance(images, str): candidates.append(images)
-        elif isinstance(images, list):
-            candidates += [x for x in images if isinstance(x, str)]
-    for img in soup.find_all('img'):
-        alt = (img.get('alt') or '').lower()
-        if any(x in alt for x in ['ford', 'gmc', 'cadillac', 'ram', 'vehicle', 'image 1']):
-            for k in ['src', 'data-src', 'data-original']:
-                if img.get(k): candidates.append(img[k])
-    for url in candidates:
-        url = urljoin(BASE, url)
-        path = urlparse(url).path.lower()
-        if url.startswith('https://') and (re.search(r'\.(?:jpe?g|png|webp)(?:$|\?)', path) or '/image' in path or '/photo' in path):
+
+    def add(value, weight=0):
+        if isinstance(value, dict):
+            value = value.get('url') or value.get('contentUrl')
+        if isinstance(value, str):
+            value = value.strip()
+            if value and not value.startswith(('data:', 'blob:', '#')):
+                candidates.append((weight, urljoin(BASE, value)))
+
+    # Website's preview image and vehicle-specific structured data.
+    add(meta(soup, 'og:image', 'twitter:image'), 75)
+    for obj in get_jsonld(soup):
+        imgs = obj.get('image')
+        if isinstance(imgs, list):
+            for val in imgs: add(val, 85)
+        else:
+            add(imgs, 85)
+
+    # Lazy-loaded galleries often put the real picture in one of these attributes.
+    attrs = ('data-full', 'data-full-src', 'data-zoom-image', 'data-large-image',
+             'data-original', 'data-src', 'data-lazy-src', 'src', 'poster')
+    for img in soup.find_all(['img', 'source']):
+        context = ' '.join(str(img.get(k, '')) for k in ('alt', 'class', 'id')).lower()
+        score = 55 if any(w in context for w in ('vehicle', 'gallery', 'slider', 'ford',
+                  'gmc', 'cadillac', 'ram', 'truck', 'photo', 'inventory')) else 20
+        for attr in attrs:
+            add(img.get(attr), score + (12 if attr != 'src' else 0))
+        for attr in ('srcset', 'data-srcset'):
+            val = img.get(attr)
+            if val:
+                # Prefer the last (typically largest) srcset candidate.
+                for option in val.split(','):
+                    add(option.strip().split(' ')[0], score + 10)
+
+    # Some galleries place URLs in data attributes and inline background styles.
+    for tag in soup.find_all(True):
+        for k, v in tag.attrs.items():
+            if k.startswith('data-') and any(w in k for w in ('image', 'photo', 'thumb')):
+                if isinstance(v, str): add(v, 40)
+        style = tag.get('style', '')
+        if isinstance(style, str):
+            for url in re.findall(r'url\([\"\']?([^\)\"\']+)', style):
+                add(url, 35)
+
+    def valid(url):
+        parts = urlparse(url)
+        if parts.scheme != 'https' or not parts.netloc:
+            return False
+        low = (parts.path + '?' + parts.query).lower()
+        if any(x in low for x in ('logo', 'favicon', 'sprite', 'placeholder', 'icon',
+                                   'avatar', 'badge', 'tracking', 'pixel')):
+            return False
+        return True
+
+    for score, url in sorted(candidates, key=lambda p: p[0], reverse=True):
+        if valid(url):
             return url
     return None
+
+
+def valid_vin(value):
+    """Require a plausible 17-character VIN, not a 17-letter model slug."""
+    value = (value or '').upper()
+    return bool(VIN_RE.fullmatch(value) and sum(c.isdigit() for c in value) >= 4)
 
 
 def parse_detail(html, url, title_hint=''):
@@ -112,11 +159,25 @@ def parse_detail(html, url, title_hint=''):
     body = soup.get_text('\n', strip=True)
     title = next((h.get_text(' ', strip=True) for h in soup.find_all('h1') if re.search(r'20\d\d', h.get_text(' ', strip=True))), None) or title_hint
     vin = None
-    path_match = VIN_RE.search(urlparse(url).path.upper())
-    if path_match: vin = path_match.group(0)
+    # Vehicle URLs end with the VIN, e.g. ...-1FT8W4DM1VEC05424/.
+    # Never run a free-text VIN search on the entire model slug: the substring
+    # F450SUPERDUTYCREW is 17 characters but is NOT a VIN.
+    end_slug = urlparse(url).path.rstrip('/').split('-')[-1].upper()
+    if valid_vin(end_slug):
+        vin = end_slug
     if not vin:
         labeled = re.search(r'\bVIN\s*[:#]?\s*([A-HJ-NPR-Z0-9]{17})\b', body, re.I)
-        if labeled: vin = labeled.group(1).upper()
+        if labeled and valid_vin(labeled.group(1)):
+            vin = labeled.group(1).upper()
+    if not vin:
+        for obj in get_jsonld(soup):
+            for key in ('vehicleIdentificationNumber', 'vin'):
+                candidate = str(obj.get(key, '')).upper()
+                if valid_vin(candidate):
+                    vin = candidate
+                    break
+            if vin:
+                break
     price = None
     for o in get_jsonld(soup):
         offers = o.get('offers')
@@ -167,6 +228,7 @@ def validate(rows, expected_min=1):
     for i, row in enumerate(rows, 1):
         for field in required:
             if not row.get(field): errors.append(f'Row {i}: missing {field}')
+        if row.get('item_id') and not valid_vin(row['item_id']): errors.append(f'Row {i}: invalid VIN {row["item_id"]}')
         if row.get('item_id') in seen: errors.append(f'Row {i}: duplicate VIN {row.get("item_id")}')
         seen.add(row.get('item_id'))
         if row.get('price') and not re.match(r'^\d+(?:\.\d{2}) USD$', row['price']): errors.append(f'Row {i}: invalid price')
@@ -189,7 +251,6 @@ def main():
     else:
         sess = requests.Session(); sess.headers.update({'User-Agent':UA})
         # Honor robots.txt; fail closed if unreachable or disallowed.
-        
         parser = RobotFileParser()
         try:
             robots_response = sess.get(BASE + '/robots.txt', timeout=20)
@@ -197,10 +258,8 @@ def main():
             parser.parse(robots_response.text.splitlines())
         except requests.RequestException as e:
             sys.exit(f'Cannot retrieve robots policy: {e}')
-
         if not parser.can_fetch(UA, INDEX):
             sys.exit('Automated inventory fetch not permitted')
-
         links = {}
         for page in (1,2,3,4,5):
             target = INDEX if page==1 else INDEX+'&page='+str(page)
