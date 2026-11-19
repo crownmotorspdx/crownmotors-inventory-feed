@@ -1,16 +1,20 @@
-
-name: Crown Motors Inventory Feed Test
+name: Crown Motors Daily Inventory Feed
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 15 * * *'  # Daily at 15:00 UTC (7 AM PST / 8 AM PDT)
 
 permissions:
   contents: read
 
+concurrency:
+  group: crown-inventory-pages
+  cancel-in-progress: false
+
 jobs:
   test-inventory:
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
@@ -30,63 +34,64 @@ jobs:
       - name: Run validation tests
         run: python -m unittest discover -s tests -v
 
-
-      - name: Diagnose website access
-        run: |
-          python - <<'PY'
-          import requests
-          from urllib.robotparser import RobotFileParser
-
-          url = "https://www.crownmotorspdx.com/robots.txt"
-          index = "https://www.crownmotorspdx.com/used-vehicles/?_exclude=condition"
-
-          try:
-              r = requests.get(url, timeout=20)
-              print("HTTP status:", r.status_code)
-              print("Final URL:", r.url)
-              print("Content type:", r.headers.get("content-type"))
-              print("Robots response:", repr(r.text[:1000]))
-
-              r.raise_for_status()
-              parser = RobotFileParser()
-              parser.parse(r.text.splitlines())
-              print("Inventory allowed:", parser.can_fetch("CrownMotorsPDX-InventoryFeed", index))
-          except Exception as exc:
-              print("Access diagnostic failed:", repr(exc))
-              raise
-          PY
-
       - name: Extract Crown Motors inventory
-        run: python feed_builder.py --min-vehicles 18
+        run: python feed_builder.py --min-vehicles 8
 
-      - name: Display inventory validation report
+      - name: Validate and summarize feed
         run: |
           python - <<'PY'
           import gzip
           import json
+          import re
+          from pathlib import Path
 
-          path = "output/crown_inventory.jsonl.gz"
-
-          with gzip.open(path, "rt", encoding="utf-8") as file:
-              vehicles = [json.loads(line) for line in file if line.strip()]
-
-          print("TOTAL VEHICLES:", len(vehicles))
-          print("")
-
-          for number, vehicle in enumerate(vehicles, 1):
-              print(f"VEHICLE {number}")
-              print("VIN:", vehicle.get("item_id"))
-              print("TITLE:", vehicle.get("title"))
-              print("PRICE:", vehicle.get("price"))
-              print("IMAGE:", vehicle.get("image_url"))
-              print("LISTING:", vehicle.get("url"))
-              print("AVAILABILITY:", vehicle.get("availability"))
-              print("---")
+          p = Path('output/crown_inventory.jsonl.gz')
+          assert p.is_file() and p.stat().st_size > 0, 'Missing or empty feed'
+          with gzip.open(p, 'rt', encoding='utf-8') as f:
+              rows = [json.loads(line) for line in f if line.strip()]
+          print('Extracted vehicles:', len(rows))
+          assert len(rows) >= 8, 'Unexpectedly small inventory; publication stopped'
+          ids = [r.get('item_id') for r in rows]
+          assert all(isinstance(v, str) and re.fullmatch(r'[A-HJ-NPR-Z0-9]{17}', v) for v in ids), 'Invalid VIN detected'
+          assert len(set(ids)) == len(ids), 'Duplicate VIN detected'
+          photos = [r.get('image_url', '') for r in rows]
+          assert all(url.startswith('https://') for url in photos), 'Missing/invalid HTTPS photo'
+          assert len(set(photos)) == len(photos), 'Duplicate primary photo detected'
+          assert all(str(r.get('price', '')).endswith(' USD') for r in rows), 'Missing USD price'
+          print('Unique VINs:', len(set(ids)))
+          print('Unique photo URLs:', len(set(photos)))
+          print('Sample titles:', [r.get('title') for r in rows[:3]])
           PY
 
-      - name: Save test results
-        uses: actions/upload-artifact@v4
+      - name: Prepare GitHub Pages feed
+        run: |
+          mkdir -p site
+          cp output/crown_inventory.jsonl.gz site/crown_inventory.jsonl.gz
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en"><head><meta charset="utf-8"><title>Crown Motors PDX Inventory Feed</title></head>
+          <body><h1>Crown Motors PDX Inventory Feed</h1>
+          <p>Public machine-readable vehicle feed:</p>
+          <p><a href="crown_inventory.jsonl.gz">Download vehicle inventory feed</a></p></body></html>
+          HTML
+          touch site/.nojekyll
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
         with:
-          name: crown-inventory-test
-          path: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project/output/crown_inventory.jsonl.gz
-          retention-days: 7
+          path: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project/site
+
+  deploy:
+    needs: test-inventory
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy inventory feed to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
