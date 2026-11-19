@@ -5,6 +5,7 @@ No publishing is performed. This script must only run when the website permits a
 retrieval. Used automobile eligibility in OpenAI commerce is not yet confirmed.
 """
 import argparse
+import base64
 import datetime as dt
 import gzip
 import json
@@ -85,67 +86,77 @@ def meta(soup, *names):
     return None
 
 
+def dealercenter_photo(url):
+    """Recognize genuine DealerCenter photos behind the site's image proxy.
+
+    Website assets such as /_img/-... are *not* sufficient evidence that
+    an image depicts the vehicle. The gallery proxy embeds its source URL
+    in a base64url path segment, which we can check without fetching it.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != 'https':
+        return False
+    if parsed.hostname == 'imagesdl.dealercenter.net':
+        return parsed.path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+    if parsed.hostname not in ('crownmotorspdx.com', 'www.crownmotorspdx.com'):
+        return False
+    if not parsed.path.startswith('/_img/'):
+        return False
+    for part in parsed.path.strip('/').split('/'):
+        if len(part) < 40 or not re.fullmatch(r'[A-Za-z0-9_-]+', part):
+            continue
+        try:
+            raw = base64.urlsafe_b64decode(part + '=' * (-len(part) % 4)).decode('utf8')
+        except (ValueError, UnicodeDecodeError):
+            continue
+        source = urlparse(raw)
+        if source.scheme == 'https' and source.hostname == 'imagesdl.dealercenter.net' and source.path.lower().endswith(('.jpg','.jpeg','.png','.webp')):
+            return True
+    return False
+
+
 def direct_image(soup):
-    """Find a likely vehicle photograph, including lazy-loaded/CDN image URLs."""
+    """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
     candidates = []
 
-    def add(value, weight=0):
+    def add(value, priority):
         if isinstance(value, dict):
             value = value.get('url') or value.get('contentUrl')
-        if isinstance(value, str):
-            value = value.strip()
-            if value and not value.startswith(('data:', 'blob:', '#')):
-                candidates.append((weight, urljoin(BASE, value)))
+        if not isinstance(value, str):
+            return
+        url = urljoin(BASE, value.strip())
+        if dealercenter_photo(url):
+            candidates.append((priority, url))
 
-    # Website's preview image and vehicle-specific structured data.
-    add(meta(soup, 'og:image', 'twitter:image'), 75)
+    # Vehicle-specific structured metadata has precedence.
     for obj in get_jsonld(soup):
-        imgs = obj.get('image')
-        if isinstance(imgs, list):
-            for val in imgs: add(val, 85)
+        vals = obj.get('image')
+        if isinstance(vals, list):
+            for v in vals: add(v, 100)
         else:
-            add(imgs, 85)
+            add(vals, 100)
+    add(meta(soup, 'og:image', 'twitter:image'), 90)
 
-    # Lazy-loaded galleries often put the real picture in one of these attributes.
-    attrs = ('data-full', 'data-full-src', 'data-zoom-image', 'data-large-image',
-             'data-original', 'data-src', 'data-lazy-src', 'src', 'poster')
+    # Look through actual image/gallery tags, including lazy-loaded variants.
     for img in soup.find_all(['img', 'source']):
-        context = ' '.join(str(img.get(k, '')) for k in ('alt', 'class', 'id')).lower()
-        score = 55 if any(w in context for w in ('vehicle', 'gallery', 'slider', 'ford',
-                  'gmc', 'cadillac', 'ram', 'truck', 'photo', 'inventory')) else 20
-        for attr in attrs:
-            add(img.get(attr), score + (12 if attr != 'src' else 0))
+        for attr in ('data-full', 'data-full-src', 'data-zoom-image', 'data-large-image',
+                     'data-original', 'data-src', 'data-lazy-src', 'src', 'poster'):
+            add(img.get(attr), 80)
         for attr in ('srcset', 'data-srcset'):
-            val = img.get(attr)
-            if val:
-                # Prefer the last (typically largest) srcset candidate.
-                for option in val.split(','):
-                    add(option.strip().split(' ')[0], score + 10)
+            value = img.get(attr)
+            if value:
+                for option in value.split(','):
+                    add(option.strip().split()[0], 80)
 
-    # Some galleries place URLs in data attributes and inline background styles.
+    # Some vehicle galleries store image URLs in data attributes.
     for tag in soup.find_all(True):
-        for k, v in tag.attrs.items():
-            if k.startswith('data-') and any(w in k for w in ('image', 'photo', 'thumb')):
-                if isinstance(v, str): add(v, 40)
-        style = tag.get('style', '')
-        if isinstance(style, str):
-            for url in re.findall(r'url\([\"\']?([^\)\"\']+)', style):
-                add(url, 35)
+        for name, value in tag.attrs.items():
+            if name.startswith('data-') and any(word in name for word in ('photo', 'image', 'thumb')):
+                add(value, 60)
 
-    def valid(url):
-        parts = urlparse(url)
-        if parts.scheme != 'https' or not parts.netloc:
-            return False
-        low = (parts.path + '?' + parts.query).lower()
-        if any(x in low for x in ('logo', 'favicon', 'sprite', 'placeholder', 'icon',
-                                   'avatar', 'badge', 'tracking', 'pixel')):
-            return False
-        return True
-
-    for score, url in sorted(candidates, key=lambda p: p[0], reverse=True):
-        if valid(url):
-            return url
-    return None
+    # No generic fallback: missing images should fail validation rather than
+    # silently publishing the same site asset for every inventory record.
+    return max(candidates, key=lambda pair: pair[0])[1] if candidates else None
 
 
 def valid_vin(value):
@@ -234,6 +245,9 @@ def validate(rows, expected_min=1):
         if row.get('price') and not re.match(r'^\d+(?:\.\d{2}) USD$', row['price']): errors.append(f'Row {i}: invalid price')
         for key in ['url','image_url']:
             if row.get(key) and not row[key].startswith('https://'): errors.append(f'Row {i}: invalid {key}')
+    images = [row.get('image_url') for row in rows if row.get('image_url')]
+    if len(images) != len(set(images)):
+        errors.append('Duplicate primary image URLs across vehicles; refusing potentially incorrect photos')
     if len(rows) < expected_min: errors.append(f'Count {len(rows)} below expected minimum {expected_min}')
     return errors
 
