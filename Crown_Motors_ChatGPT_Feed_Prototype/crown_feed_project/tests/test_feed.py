@@ -6,7 +6,7 @@ class FeedTests(unittest.TestCase):
   html='<a href="/vehicle/used-2027-Ford-F450-1FT8W4DM1VEC05424/">2027 Ford F450 Platinum</a>'
   self.assertEqual(len(extract_links(html)),1)
  def test_detail(self):
-  html='''<html><head><meta property="og:image" content="https://example.com/truck.jpg"><meta name="description" content="Crown Signature Reserve truck"></head><body><h1>2027 Ford F450 Platinum</h1><p>Sale price $122,900</p><div>VIN 1FT8W4DM1VEC05424</div></body></html>'''
+  html='''<html><head><meta property="og:image" content="https://imagesdl.dealercenter.net/1024/768/202605-3b6b3c8e4fb24038a64ee449c9bb54e4/202611-0e9a0eca01d0422e84bc0fe8052f609e.jpg"><meta name="description" content="Crown Signature Reserve truck"></head><body><h1>2027 Ford F450 Platinum</h1><p>Sale price $122,900</p><div>VIN 1FT8W4DM1VEC05424</div></body></html>'''
   row=parse_detail(html,'https://www.crownmotorspdx.com/vehicle/used-2027-Ford-F450-1FT8W4DM1VEC05424/')
   self.assertFalse(validate([row]));self.assertEqual(row['availability'],'unknown')
   self.assertEqual(row['price'],'122900.00 USD')
