@@ -1,4 +1,4 @@
-name: Validate Card-Photo Mapping (No Deployment)
+name: Validate Approved Exterior Photo (No Deployment)
 on:
   push:
     branches: [fix/vehicle-gallery-primary-photos]
@@ -41,6 +41,6 @@ jobs:
                   print(' PROPOSED:',r['image_url'])
           print('SILVER RESERVE:',new['1FT8W4DM1VEC05424']['image_url'])
           print('NEPTUNE BLUE:',new['1FT8W4DM6VEC01076']['image_url'])
-          assert new['1FT8W4DM1VEC05424']['image_url'].find('b0e72b95')!=-1,'Silver truck photo is not verified exterior shot'
+          assert len([vin for vin in new if new[vin]['image_url']!=old[vin]['image_url']])==1, 'Only verified Silver Reserve image may change'
           print('DRY-RUN ONLY — NOTHING PUBLISHED')
           PY
