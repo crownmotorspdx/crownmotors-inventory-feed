@@ -1,4 +1,4 @@
-name: Validate Approved Exterior Photo (No Deployment)
+name: Validate Only Approved Silver Exterior Photo (No Deployment)
 on:
   push:
     branches: [fix/vehicle-gallery-primary-photos]
