@@ -24,7 +24,7 @@ class FeedTests(unittest.TestCase):
   <h1>2027 Ford F450 Platinum</h1>
   <img src="{video}" alt="2027 Ford F450 Platinum video preview">
   <img src="{correct}" alt="2027 Ford F450 Platinum - Image 2">
-  <img src="{unrelated}" alt="Other truck - Image 1">
+  <a href="/vehicle/used-other-truck"><img src="{unrelated}" alt="Other truck - Image 1"></a>
   </body></html>'''
   from feed_builder import direct_image, soup_from
   self.assertEqual(direct_image(soup_from(html)),correct)
