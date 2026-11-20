@@ -119,16 +119,15 @@ def direct_image(soup):
     """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
     # Ignore video preview thumbnails; use a numbered gallery photo from
     # this vehicle (and never a related-vehicle thumbnail).
-    h1 = next((h.get_text(' ', strip=True) for h in soup.find_all('h1') if re.search(r'20\d\d', h.get_text(' ', strip=True))), '')
-    normalized_title = ' '.join(h1.split()).casefold()
     numbered_photos = []
     for img in soup.find_all('img'):
         alt = ' '.join(img.get('alt', '').split())
         match = re.search(r'\s+-\s+Image\s+(\d+)\s*', alt, re.I)
         if not match or match.end() != len(alt):
             continue
-        image_title = alt[:match.start()].strip().casefold()
-        if normalized_title and image_title != normalized_title:
+        # Recommended-vehicle thumbnails are links to other detail pages;
+        # the selected vehicle's main gallery images are not.
+        if img.find_parent('a', href=True):
             continue
         for attr in ('data-full', 'data-full-src', 'data-zoom-image',
                      'data-large-image', 'data-original', 'data-src',
