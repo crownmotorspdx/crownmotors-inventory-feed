@@ -1,0 +1,48 @@
+name: Inspect F450 Gallery Candidate Images
+on:
+  push:
+    branches: [fix/vehicle-gallery-primary-photos]
+    paths: [.github/workflows/inspect-f450-gallery.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+      - name: List full F450 gallery photos (no deploy)
+        working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
+        run: |
+          python - <<'PY'
+          from urllib.parse import urljoin,urlparse
+          from urllib.robotparser import RobotFileParser
+          import requests,base64,re
+          from bs4 import BeautifulSoup
+          from feed_builder import BASE,INDEX,UA,extract_links,dealercenter_photo
+          s=requests.Session();s.headers['User-Agent']=UA
+          robots=s.get(BASE+'/robots.txt',timeout=20);robots.raise_for_status()
+          rp=RobotFileParser();rp.parse(robots.text.splitlines())
+          assert rp.can_fetch(UA,INDEX)
+          index=s.get(INDEX,timeout=30);index.raise_for_status()
+          u=next(u for u in extract_links(index.text) if '1FT8W4DM1VEC05424' in u)
+          assert rp.can_fetch(UA,u)
+          r=s.get(u,timeout=30);r.raise_for_status()
+          soup=BeautifulSoup(r.text,'html.parser')
+          for im in soup.find_all('img'):
+              a=im.get('alt','')
+              if not ('video preview' in a.lower() or re.search(r' - Image \d+$',a)):continue
+              v=im.get('src','')
+              if not dealercenter_photo(urljoin(BASE,v)):continue
+              base=''
+              for part in urlparse(v).path.split('/'):
+                  if len(part)<40 or not re.fullmatch(r'[A-Za-z0-9_-]+',part):continue
+                  try:
+                      raw=base64.urlsafe_b64decode(part+'='*(-len(part)%4)).decode()
+                      if raw.startswith('https://imagesdl.dealercenter.net/'):base=raw;break
+                  except Exception:pass
+              print('GALLERY_ITEM',a,'|',base or urljoin(BASE,v))
+          PY
