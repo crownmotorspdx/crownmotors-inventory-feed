@@ -119,7 +119,7 @@ def direct_image(soup):
     """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
     # Ignore video preview thumbnails; use a numbered gallery photo from
     # this vehicle (and never a related-vehicle thumbnail).
-    h1 = next((h.get_text(' ', strip=True) for h in soup.find_all('h1')), '')
+    h1 = next((h.get_text(' ', strip=True) for h in soup.find_all('h1') if re.search(r'20\d\d', h.get_text(' ', strip=True))), '')
     normalized_title = ' '.join(h1.split()).casefold()
     numbered_photos = []
     for img in soup.find_all('img'):
