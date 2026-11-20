@@ -115,7 +115,7 @@ def dealercenter_photo(url):
     return False
 
 
-def direct_image(soup):
+def direct_image(soup, vin=None):
     """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
     # Ignore video preview thumbnails; use a numbered gallery photo from
     # this vehicle (and never a related-vehicle thumbnail).
@@ -153,10 +153,18 @@ def direct_image(soup):
                 numbered_photos.append((int(match.group(1)), url))
                 break
     if numbered_photos:
-        for _, url in sorted(numbered_photos, key=lambda pair: pair[0]):
-            if url not in video_previews:
-                return url
-        # Fail safely rather than publish a video preview as a vehicle photo.
+        # Verified exception: on the Crown Signature Reserve F-450 C05424,
+        # Image 1 duplicates the video preview, Image 2 is a build sheet,
+        # and Image 3 is the exterior truck photo confirmed by the dealer.
+        # Other listings retain the first actual non-preview gallery image.
+        is_reserve_with_build_sheet = (vin == '1FT8W4DM1VEC05424' and bool(video_previews))
+        for number, url in sorted(numbered_photos, key=lambda pair: pair[0]):
+            if url in video_previews:
+                continue
+            if is_reserve_with_build_sheet and number < 3:
+                continue
+            return url
+        # Fail safely rather than publish a video preview / build sheet.
         return None
 
     # If the gallery is absent, retain the existing metadata fallback.
@@ -267,7 +275,7 @@ def parse_detail(html, url, title_hint=''):
     record = {
         'item_id': vin, 'title': title[:150] if title else None,
         'description': description or None, 'url': url, 'brand': brand,
-        'seller_name': 'Crown Motors PDX', 'image_url': direct_image(soup),
+        'seller_name': 'Crown Motors PDX', 'image_url': direct_image(soup, vin=vin),
         'availability': 'unknown', 'price': f'{price:.2f} USD' if price else None,
         'target_countries': ['US'], 'store_country': 'US', 'condition': 'used',
         'is_eligible_checkout': False,
