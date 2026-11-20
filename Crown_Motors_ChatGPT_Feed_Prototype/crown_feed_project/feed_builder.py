@@ -115,8 +115,31 @@ def dealercenter_photo(url):
     return False
 
 
-def direct_image(soup):
+def direct_image(soup, vin=None):
     """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
+    # Explicitly identify a video preview. Only the confirmed Reserve listing
+    # needs a gallery override; other photos remain unchanged until reviewed.
+    if vin == '1FT8W4DM1VEC05424':
+        preview_urls = set()
+        for img in soup.find_all('img'):
+            if 'video preview' in img.get('alt', '').lower():
+                value = img.get('src')
+                if isinstance(value, str):
+                    image = urljoin(BASE, value.strip())
+                    if dealercenter_photo(image):
+                        preview_urls.add(image)
+        if preview_urls:
+            for img in soup.find_all('img'):
+                if not img.get('alt', '').strip().endswith(' - Image 3'):
+                    continue
+                if img.find_parent('a', href=True):
+                    continue
+                value = img.get('src')
+                if isinstance(value, str):
+                    image = urljoin(BASE, value.strip())
+                    if dealercenter_photo(image) and image not in preview_urls:
+                        return image
+            return None
     candidates = []
 
     def add(value, priority):
@@ -224,7 +247,7 @@ def parse_detail(html, url, title_hint=''):
     record = {
         'item_id': vin, 'title': title[:150] if title else None,
         'description': description or None, 'url': url, 'brand': brand,
-        'seller_name': 'Crown Motors PDX', 'image_url': direct_image(soup),
+        'seller_name': 'Crown Motors PDX', 'image_url': direct_image(soup, vin=vin),
         'availability': 'unknown', 'price': f'{price:.2f} USD' if price else None,
         'target_countries': ['US'], 'store_country': 'US', 'condition': 'used',
         'is_eligible_checkout': False,
