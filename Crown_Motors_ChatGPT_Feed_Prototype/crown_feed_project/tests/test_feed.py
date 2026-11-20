@@ -86,4 +86,29 @@ class FeedTests(unittest.TestCase):
   from feed_builder import direct_image, soup_from
   self.assertEqual(direct_image(soup_from(html), vin='1FT8W4DM1VEC05424'),a)
 
+
+ def test_inventory_card_photo_matches_vehicle_link(self):
+  good='https://imagesdl.dealercenter.net/1024/768/truck-one.jpg'
+  other='https://imagesdl.dealercenter.net/1024/768/truck-two.jpg'
+  html=f'''<a href="/vehicle/used-2027-Ford-F450-1FT8W4DM1VEC05424/">
+  <img alt="2027 Ford F450 Platinum" src="{good}"></a>
+  <a href="/vehicle/used-2027-Ford-F450-1FT8W4DM6VEC01076/">
+  <img alt="2027 Ford F450 Neptune Blue" src="{other}"></a>
+  <a href="/about"><img alt="Crown Motors Logo" src="/logo.png"></a>'''
+  from feed_builder import extract_inventory_photos, BASE
+  d=extract_inventory_photos(html)
+  self.assertEqual(d[BASE+'/vehicle/used-2027-Ford-F450-1FT8W4DM1VEC05424/'],good)
+  self.assertEqual(d[BASE+'/vehicle/used-2027-Ford-F450-1FT8W4DM6VEC01076/'],other)
+  self.assertEqual(len(d),2)
+
+ def test_inventory_card_does_not_choose_promo_logo(self):
+  logo='https://imagesdl.dealercenter.net/1024/768/promo.jpg'
+  truck='https://imagesdl.dealercenter.net/1024/768/truck.jpg'
+  html=f'''<a href="/vehicle/used-2026-Cadillac-Escalade-1GYS9GKL2TR310580/">
+  <img alt="Crown Motors logo" src="{logo}">
+  <img alt="2026 Cadillac Escalade" src="{truck}"></a>'''
+  from feed_builder import extract_inventory_photos,BASE
+  d=extract_inventory_photos(html)
+  self.assertEqual(d[BASE+'/vehicle/used-2026-Cadillac-Escalade-1GYS9GKL2TR310580/'],truck)
+
 if __name__=='__main__':unittest.main()
