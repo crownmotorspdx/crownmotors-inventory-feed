@@ -1,0 +1,86 @@
+name: Diagnose Crown Vehicle Photos (No Deployment)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-photo-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install diagnostics dependencies
+        run: pip install requests beautifulsoup4
+      - name: Inspect vehicle gallery and metadata without publishing
+        working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
+        run: |
+          python - <<'PY'
+          import requests, re, base64
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin, urlparse
+          from feed_builder import direct_image, dealercenter_photo, get_jsonld, meta, UA, BASE, INDEX, extract_links
+          from urllib.robotparser import RobotFileParser
+
+          sess=requests.Session()
+          sess.headers.update({'User-Agent':UA})
+          policy=sess.get(BASE+'/robots.txt', timeout=25)
+          policy.raise_for_status()
+          robots=RobotFileParser()
+          robots.parse(policy.text.splitlines())
+          if not robots.can_fetch(UA,INDEX): raise SystemExit('Inventory crawling disallowed by robots policy')
+          index=sess.get(INDEX,timeout=30)
+          index.raise_for_status()
+          links=extract_links(index.text)
+          targets=['1FT8W4DM1VEC05424','1FT8W4DM6VEC01076']
+          def decode(url):
+              for seg in urlparse(url).path.split('/'):
+                  if len(seg)<40 or not re.fullmatch('[A-Za-z0-9_-]+',seg):continue
+                  try:
+                      s=base64.urlsafe_b64decode(seg+'='*(-len(seg)%4)).decode('utf-8')
+                      if s.startswith('https://imagesdl.dealercenter.net/'):return s
+                  except Exception:pass
+              return url
+          for vin in targets:
+              match=next(((u,t) for u,t in links.items() if vin in u.upper()),None)
+              if not match:
+                  print('NOT FOUND on inventory index:',vin)
+                  continue
+              url,title=match
+              if not robots.can_fetch(UA,url):raise SystemExit('Vehicle URL disallowed by robots policy: '+url)
+              r=sess.get(url,timeout=30);r.raise_for_status()
+              soup=BeautifulSoup(r.text,'html.parser')
+              print('\n==========',vin,title,'==========')
+              print('DETAIL',url,'HTML_BYTES',len(r.content))
+              chosen=direct_image(soup)
+              print('CURRENT SELECTED IMAGE:',decode(chosen) if chosen else 'NONE')
+              print('OG_IMAGE:',decode(meta(soup,'og:image') or 'NONE'))
+              print('JSONLD IMAGE VALUES:')
+              for obj in get_jsonld(soup):
+                  v=obj.get('image')
+                  if v:
+                      if not isinstance(v,list):v=[v]
+                      for x in v[:8]:
+                          if isinstance(x,dict): x=x.get('url') or x.get('contentUrl')
+                          if isinstance(x,str):print('  ',decode(x))
+              print('IMAGE / SOURCE TAGS with DealerCenter photographs (up to 35 distinct):')
+              seen=set()
+              for img in soup.find_all(['img','source']):
+                  for attr in ('data-full','data-full-src','data-zoom-image','data-large-image','data-original','data-src','data-lazy-src','src','poster'):
+                      val=img.get(attr)
+                      if not val:continue
+                      absolute=urljoin(BASE,val)
+                      if not dealercenter_photo(absolute) or decode(absolute) in seen:continue
+                      seen.add(decode(absolute))
+                      parent=img.find_parent()
+                      print('  attr:',attr,'alt:',str(img.get('alt',''))[:80],'tag-class:',str(img.get('class',[]))[:80],
+                            'parent:',str(parent.name if parent else '')+' '+str(parent.get('class',[]) if parent else '')[:80],
+                            'url:',decode(absolute))
+                      if len(seen)>=35:break
+                  if len(seen)>=35:break
+              print('TOTAL DISTINCT PHOTO TAG SOURCES SHOWN:',len(seen))
+          PY
