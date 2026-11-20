@@ -2,6 +2,9 @@ name: Diagnose Crown Vehicle Photos (No Deployment)
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnose-vehicle-photos.yml'
 
 permissions:
   contents: read
