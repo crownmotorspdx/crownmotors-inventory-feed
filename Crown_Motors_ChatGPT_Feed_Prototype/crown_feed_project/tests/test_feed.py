@@ -44,4 +44,23 @@ class FeedTests(unittest.TestCase):
   from feed_builder import direct_image, soup_from
   self.assertEqual(direct_image(soup_from(html)),preview)
 
+
+ def test_numbered_image_one_duplicates_video_preview(self):
+  video='https://imagesdl.dealercenter.net/1024/768/preview.jpg'
+  image2='https://imagesdl.dealercenter.net/1024/768/photo2.jpg'
+  html=f'''<h1>2027 Ford F450 Signature Reserve</h1>
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve video preview">
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve - Image 1">
+  <img src="{image2}" alt="2027 Ford F450 Signature Reserve - Image 2">'''
+  from feed_builder import direct_image, soup_from
+  self.assertEqual(direct_image(soup_from(html)),image2)
+
+ def test_only_video_preview_is_rejected(self):
+  video='https://imagesdl.dealercenter.net/1024/768/preview.jpg'
+  html=f'''<h1>2027 Ford F450 Signature Reserve</h1>
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve video preview">
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve - Image 1">'''
+  from feed_builder import direct_image, soup_from
+  self.assertIsNone(direct_image(soup_from(html)))
+
 if __name__=='__main__':unittest.main()
