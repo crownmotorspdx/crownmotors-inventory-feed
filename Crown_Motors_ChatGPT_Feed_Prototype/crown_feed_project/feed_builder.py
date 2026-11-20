@@ -119,6 +119,19 @@ def direct_image(soup):
     """Choose a vehicle photograph; refuse ambiguous generic site graphics."""
     # Ignore video preview thumbnails; use a numbered gallery photo from
     # this vehicle (and never a related-vehicle thumbnail).
+    video_previews = set()
+    for img in soup.find_all('img'):
+        if 'video preview' not in img.get('alt', '').lower():
+            continue
+        for attr in ('data-full', 'data-full-src', 'data-zoom-image',
+                     'data-large-image', 'data-original', 'data-src',
+                     'data-lazy-src', 'src'):
+            value = img.get(attr)
+            if isinstance(value, str):
+                url = urljoin(BASE, value.strip())
+                if dealercenter_photo(url):
+                    video_previews.add(url)
+
     numbered_photos = []
     for img in soup.find_all('img'):
         alt = ' '.join(img.get('alt', '').split())
@@ -140,7 +153,11 @@ def direct_image(soup):
                 numbered_photos.append((int(match.group(1)), url))
                 break
     if numbered_photos:
-        return min(numbered_photos, key=lambda pair: pair[0])[1]
+        for _, url in sorted(numbered_photos, key=lambda pair: pair[0]):
+            if url not in video_previews:
+                return url
+        # Fail safely rather than publish a video preview as a vehicle photo.
+        return None
 
     # If the gallery is absent, retain the existing metadata fallback.
     candidates = []
