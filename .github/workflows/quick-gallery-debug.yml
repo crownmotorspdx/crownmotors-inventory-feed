@@ -1,0 +1,56 @@
+name: Quick Gallery HTML Diagnostics
+
+on:
+  push:
+    branches:
+      - fix/vehicle-gallery-primary-photos
+    paths:
+      - '.github/workflows/quick-gallery-debug.yml'
+
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install requests beautifulsoup4
+      - name: Inspect gallery nesting and selection
+        working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
+        run: |
+          python - <<'PY'
+          import requests,re
+          from bs4 import BeautifulSoup
+          from urllib.robotparser import RobotFileParser
+          from feed_builder import UA,BASE,INDEX,extract_links,direct_image,dealercenter_photo
+          sess=requests.Session()
+          sess.headers.update({'User-Agent':UA})
+          rr=sess.get(BASE+'/robots.txt',timeout=20)
+          rr.raise_for_status()
+          rb=RobotFileParser();rb.parse(rr.text.splitlines())
+          assert rb.can_fetch(UA,INDEX)
+          i=sess.get(INDEX,timeout=30);i.raise_for_status()
+          links=extract_links(i.text)
+          for suffix in ('05424','01076'):
+              link=next(u for u in links if u.upper().rstrip('/').endswith(suffix))
+              assert rb.can_fetch(UA,link)
+              r=sess.get(link,timeout=30);r.raise_for_status()
+              s=BeautifulSoup(r.text,'html.parser')
+              print('VIN',suffix)
+              print('HEADINGS:',[(h.name,h.get_text(' ',strip=True)[:120]) for h in s.find_all('h1')][:8])
+              print('SELECTED:',direct_image(s))
+              num=0
+              for img in s.find_all('img'):
+                  alt=img.get('alt','')
+                  if 'Image ' in alt or 'video preview' in alt:
+                      src=img.get('src','')
+                      parent=img.parent
+                      print('  alt:',alt[:140],'photo:',dealercenter_photo(src),'parent:',parent.name if parent else '-','classes:',parent.get('class',[]) if parent else '-')
+                      a=img.find_parent('a')
+                      print('   ancestor anchor:',bool(a),str(a.get('href',''))[:120] if a else '')
+                      num+=1
+                      if num>=7:break
+          PY
