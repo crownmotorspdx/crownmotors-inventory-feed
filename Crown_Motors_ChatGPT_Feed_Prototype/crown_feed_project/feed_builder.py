@@ -47,6 +47,37 @@ def extract_links(html):
     return out
 
 
+
+def extract_inventory_photos(html):
+    """Map exact vehicle-detail URLs to the photo on their inventory card.
+
+    These cards are intended to depict the vehicle, unlike optional gallery
+    slides that may contain branded build sheets and dealership artwork.
+    """
+    soup = soup_from(html)
+    images = {}
+    for anchor in soup.find_all('a', href=True):
+        url = urljoin(BASE, anchor['href']).split('#')[0]
+        if urlparse(url).hostname not in {'www.crownmotorspdx.com', 'crownmotorspdx.com'}:
+            continue
+        if '/vehicle/used-' not in urlparse(url).path.lower():
+            continue
+        for img in anchor.find_all('img'):
+            alt = img.get('alt', '').strip()
+            if not re.search(r'20\d{2}\s', alt):
+                continue
+            for attr in ('src', 'data-src', 'data-original'):
+                value = img.get(attr)
+                if isinstance(value, str):
+                    absolute = urljoin(BASE, value.strip())
+                    if dealercenter_photo(absolute):
+                        images[url] = absolute
+                        break
+            if url in images:
+                break
+    return images
+
+
 def get_jsonld(soup):
     objs = []
     for tag in soup.select('script[type="application/ld+json"]'):
@@ -326,11 +357,13 @@ def main():
         if not parser.can_fetch(UA, INDEX):
             sys.exit('Automated inventory fetch not permitted')
         links = {}
+        card_photos = {}
         for page in (1,2,3,4,5):
             target = INDEX if page==1 else INDEX+'&page='+str(page)
             if not parser.can_fetch(UA, target): sys.exit('robots policy disallows inventory page')
             response=sess.get(target,timeout=25);response.raise_for_status()
             found = extract_links(response.text)
+            card_photos.update(extract_inventory_photos(response.text))
             if page>1 and (not found or all(url in links for url in found)): break
             links.update(found)
             if page>1 and len(found)<12: break
@@ -340,7 +373,17 @@ def main():
         for url,title in links.items():
             if not parser.can_fetch(UA,url): sys.exit(f'robots policy disallows {url}')
             r=sess.get(url,timeout=25);r.raise_for_status()
-            rows.append(parse_detail(r.text,url,title))
+            record = parse_detail(r.text,url,title)
+            # Dealer-approved special case: Reserve C05424 has a promotional
+            # build sheet before its actual exterior gallery photograph.
+            # All other vehicles use the photo displayed on their inventory
+            # card, avoiding promotional slides inside the detail-page gallery.
+            if record.get('item_id') != '1FT8W4DM1VEC05424':
+                card_photo = card_photos.get(url)
+                if not card_photo:
+                    sys.exit(f'Missing verified inventory-card photo for {url}')
+                record['image_url'] = card_photo
+            rows.append(record)
             time.sleep(1.5)
         errors=validate(rows, expected_min=args.min_vehicles)
     if errors:
