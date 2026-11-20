@@ -63,4 +63,27 @@ class FeedTests(unittest.TestCase):
   from feed_builder import direct_image, soup_from
   self.assertIsNone(direct_image(soup_from(html)))
 
+
+ def test_reserve_video_and_build_sheet_use_verified_exterior_image_three(self):
+  video='https://imagesdl.dealercenter.net/1024/768/video.jpg'
+  build='https://imagesdl.dealercenter.net/1024/768/build-sheet.jpg'
+  exterior='https://imagesdl.dealercenter.net/1024/768/truck-exterior.jpg'
+  html=f'''<h1>2027 Ford F450 Signature Reserve</h1>
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve video preview">
+  <img src="{video}" alt="2027 Ford F450 Signature Reserve - Image 1">
+  <img src="{build}" alt="2027 Ford F450 Signature Reserve - Image 2">
+  <img src="{exterior}" alt="2027 Ford F450 Signature Reserve - Image 3">'''
+  from feed_builder import direct_image, soup_from
+  self.assertEqual(direct_image(soup_from(html), vin='1FT8W4DM1VEC05424'), exterior)
+  self.assertEqual(direct_image(soup_from(html), vin='1FT8W4DM6VEC01076'), build)
+
+ def test_reserve_does_not_skip_first_image_without_video(self):
+  a='https://imagesdl.dealercenter.net/1024/768/first.jpg'
+  b='https://imagesdl.dealercenter.net/1024/768/second.jpg'
+  html=f'''<h1>2027 Ford F450 Signature Reserve</h1>
+  <img src="{a}" alt="2027 Ford F450 Signature Reserve - Image 1">
+  <img src="{b}" alt="2027 Ford F450 Signature Reserve - Image 2">'''
+  from feed_builder import direct_image, soup_from
+  self.assertEqual(direct_image(soup_from(html), vin='1FT8W4DM1VEC05424'),a)
+
 if __name__=='__main__':unittest.main()
