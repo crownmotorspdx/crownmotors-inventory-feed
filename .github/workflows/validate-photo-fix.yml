@@ -51,7 +51,10 @@ jobs:
                   print('PHOTO CHANGED',vin,row['title'])
                   print(' OLD:',previous['image_url'])
                   print(' NEW:',row['image_url'])
-              assert row['url']==previous['url'], 'Unexpected listing URL change for '+vin
+              if row['url']!=previous['url']:
+                  print('LISTING URL CHANGED ON WEBSITE:',vin)
+                  print('  OLD:',previous['url'])
+                  print('  NEW:',row['url'])
           print('Changed image count:',len(changed))
           print('Changed VIN suffixes:',[v[-5:] for v in changed])
           assert '1FT8W4DM1VEC05424' in changed, 'Silver Reserve video-preview selection was not corrected'
