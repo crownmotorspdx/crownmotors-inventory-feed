@@ -1,0 +1,46 @@
+name: Validate Card-Photo Mapping (No Deployment)
+on:
+  push:
+    branches: [fix/vehicle-gallery-primary-photos]
+    paths: ['.github/workflows/validate-card-photo-mapping.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Crown_Motors_ChatGPT_Feed_Prototype/crown_feed_project
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Generate 22-vehicle feed preview without publishing
+        run: python feed_builder.py --output output/card-photo-preview.jsonl.gz --min-vehicles 18
+      - name: Compare card photo changes
+        run: |
+          python - <<'PY'
+          import gzip,io,json,requests
+          with gzip.open('output/card-photo-preview.jsonl.gz','rt',encoding='utf8') as f:
+              new={r['item_id']:r for line in f if (r:=json.loads(line))}
+          uri='https://crownmotorspdx.github.io/crownmotors-inventory-feed/crown_inventory.jsonl.gz'
+          response=requests.get(uri,timeout=35,headers={'Cache-Control':'no-cache'})
+          response.raise_for_status()
+          with gzip.open(io.BytesIO(response.content),'rt',encoding='utf8') as f:
+              old={r['item_id']:r for line in f if (r:=json.loads(line))}
+          assert len(new)==len(old)==22 and set(new)==set(old),'Unexpected VIN or count change'
+          print('ALL 22 VINS PRESENT.')
+          for vin,r in new.items():
+              if r['image_url']!=old[vin]['image_url']:
+                  print('CHANGED',vin,r['title'])
+                  print(' CURRENT:',old[vin]['image_url'])
+                  print(' PROPOSED:',r['image_url'])
+          print('SILVER RESERVE:',new['1FT8W4DM1VEC05424']['image_url'])
+          print('NEPTUNE BLUE:',new['1FT8W4DM6VEC01076']['image_url'])
+          assert new['1FT8W4DM1VEC05424']['image_url'].find('b0e72b95')!=-1,'Silver truck photo is not verified exterior shot'
+          print('DRY-RUN ONLY — NOTHING PUBLISHED')
+          PY
