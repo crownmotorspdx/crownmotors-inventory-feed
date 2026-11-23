@@ -1,0 +1,57 @@
+name: Audit Hosted Crown Feed (No Deployment)
+on:
+  push:
+    branches: [audit/hosted-feed-nov23]
+    paths: ['.github/workflows/audit-hosted-feed.yml']
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify actual hosted JSONL feed and silver exterior photograph
+        run: |
+          python - <<'PY'
+          import urllib.request,io,gzip,json,base64
+          from urllib.parse import urlparse
+          u='https://crownmotorspdx.github.io/crownmotors-inventory-feed/crown_inventory.jsonl.gz'
+          req=urllib.request.Request(u,headers={'User-Agent':'CrownMotorsPDX-feed-audit/1.0','Cache-Control':'no-cache'})
+          with urllib.request.urlopen(req,timeout=30) as response:
+              raw=response.read()
+              print('HTTP STATUS:',response.status)
+              print('FILE BYTES:',len(raw))
+              print('CONTENT TYPE:',response.headers.get('Content-Type'))
+          with gzip.open(io.BytesIO(raw),'rt',encoding='utf8') as f:
+              rows=[json.loads(s) for s in f if s.strip()]
+          ids=[r.get('item_id') for r in rows]
+          print('PUBLISHED VEHICLE COUNT:',len(rows))
+          print('UNIQUE VINS:',len(set(ids)))
+          print('UNIQUE PHOTO URLS:',len(set(r.get('image_url') for r in rows)))
+          assert len(rows)==21,'Expected 21 vehicles from latest scheduled run'
+          assert len(set(ids))==len(rows)
+          assert len({r['image_url'] for r in rows})==len(rows)
+          target='1FT8W4DM1VEC05424'
+          record=next(r for r in rows if r.get('item_id')==target)
+          print('SILVER F450 TITLE:',record['title'])
+          print('SILVER F450 IMAGE:',record['image_url'])
+          url=record['image_url']
+          decoded=[]
+          for segment in urlparse(url).path.split('/'):
+              if len(segment)<40:continue
+              try:
+                  rawurl=base64.urlsafe_b64decode(segment+'='*(-len(segment)%4)).decode('utf8')
+                  if rawurl.startswith('https://imagesdl.dealercenter.net/'):
+                      decoded.append(rawurl)
+              except Exception:pass
+          print('SILVER PHOTO ORIGINAL:',decoded)
+          assert any('202611-b0e72b95e1ff4005a98e5e34f8eebabb.jpg' in d for d in decoded), 'Silver F-450 exterior photo not present'
+          blue=next(r for r in rows if r.get('item_id')=='1FT8W4DM6VEC01076')
+          print('NEPTUNE BLUE IMAGE:',blue['image_url'])
+          for suffix in ('1GYS9GKL2TR310580','1FT8W3BM7REF29383','1GT49VEY2RF118368','WP0AB2A70JL133816'):
+              row=next((r for r in rows if r.get('item_id')==suffix),None)
+              print('OTHER VERIFIED:',suffix, row['image_url'] if row else 'NOT PRESENT')
+          print('SUCCESS: PUBLIC HOSTED FEED VERIFIED — NO FILES CHANGED')
+          PY
